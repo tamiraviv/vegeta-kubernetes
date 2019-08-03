@@ -2,10 +2,12 @@ package vegeta
 
 import (
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"sync"
 	"time"
+	"vegeta-kubernetes/internal/pkg/utils"
 
 	"github.com/tsenart/vegeta/lib"
 )
@@ -21,7 +23,10 @@ func GetMetrics(w http.ResponseWriter) {
 	defer mutex.Unlock()
 	reporter := vegeta.NewJSONReporter(globalMetrics)
 	w.WriteHeader(http.StatusOK)
-	reporter.Report(w)
+	err := reporter.Report(w)
+	if err != nil {
+		log.Fatalln("Failed to get metrics:", err)
+	}
 }
 
 func setMetrics(results vegeta.Results) {
@@ -34,20 +39,23 @@ func setMetrics(results vegeta.Results) {
 }
 
 // Attack start the load testing process
-func Attack(url string, rate int, duration time.Duration, workers uint64) {
+func Attack(ac utils.AttackConf) {
 	targeter := vegeta.NewStaticTargeter(vegeta.Target{
-		Method: "GET",
-		URL:    "http://" + url,
+		Method: ac.Method,
+		URL:    ac.Url,
+		Header: ac.Headers,
+		Body:   ac.Body,
 	})
 
-	attacker := vegeta.NewAttacker(vegeta.Workers(workers))
+	attacker := vegeta.NewAttacker(vegeta.Workers(ac.Workers))
 
-	fmt.Printf("Starting to attack %s!\n", url)
+	fmt.Printf("Starting to attack %s!\n", ac.Url)
 	for {
 		//metrics := &vegeta.Metrics{}
 		results := vegeta.Results{}
-		vegetaRate := vegeta.Rate{rate, 1 * time.Second}
-		for res := range attacker.Attack(targeter, vegetaRate, duration, "attack") {
+		vegetaRate := vegeta.Rate{ac.Rate, 1 * time.Second}
+		for res := range attacker.Attack(targeter, vegetaRate, ac.Duration, "attack") {
+			fmt.Printf("Got the following result: %+v\n", res)
 			results.Add(res)
 		}
 
@@ -55,6 +63,9 @@ func Attack(url string, rate int, duration time.Duration, workers uint64) {
 		setMetrics(results)
 
 		reporter := vegeta.NewJSONReporter(globalMetrics)
-		reporter.Report(os.Stdout)
+		err := reporter.Report(os.Stdout)
+		if err != nil {
+			log.Fatalln("Failed to report metrics to stdout:", err)
+		}
 	}
 }
